@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# venv
+venv/
+
+# data 
+*.h5
+*.npy
+*.pt
+*.pth
+data/
+
+# config
+.claude/
+.python-version
+# mac
+.DS_Store
