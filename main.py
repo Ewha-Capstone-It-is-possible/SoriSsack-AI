@@ -46,7 +46,7 @@ class RecommendRequest(BaseModel):
 class RecommendedWord(BaseModel):
     baby_card_id: Optional[int]   # None이면 아직 baby_card에 없는 card_master 기본 카드
     card_id: Optional[int]        # card_master의 card_id. None이면 부모가 추가한 커스텀 카드
-    text: Optional[str]
+    text: str
     pos: Optional[str]
     system_score: float
 
