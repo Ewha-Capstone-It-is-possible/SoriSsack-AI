@@ -37,6 +37,7 @@ def _key(c):
 def recommend_words(
     baby_id: int,
     selected_baby_card_id: Optional[int] = None,
+    selected_card_id: Optional[int] = None,
     top_n: int = 5,
     session_length: int = 1,
     use_gpt: bool = True,
@@ -47,11 +48,14 @@ def recommend_words(
     ctx = BabyFeatureContext(baby_id)
     all_cards = cards.get_enriched_candidates(baby_id)
 
-    # 1. 선택 카드 파악
+    # 1. 선택 카드 파악 (개인 카드 baby_card_id 우선, 없으면 공용 카드 card_id 로 매칭)
     selected = None
     if selected_baby_card_id is not None:
         selected = next(
             (c for c in all_cards if c["baby_card_id"] == selected_baby_card_id), None)
+    if selected is None and selected_card_id is not None:
+        selected = next(
+            (c for c in all_cards if c.get("card_id") == selected_card_id), None)
     selected_text = selected["text"] if selected else None
     sel_key = _key(selected) if selected else None
 

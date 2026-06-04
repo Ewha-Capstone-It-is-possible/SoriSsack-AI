@@ -13,7 +13,8 @@ from pydantic import BaseModel
 # -------------------------------------------------------
 class RecommendRequest(BaseModel):
     baby_id: int
-    selected_baby_card_id: Optional[int] = None   # 첫 화면이면 None
+    selected_baby_card_id: Optional[int] = None   # 첫 화면이면 None (개인 카드)
+    selected_card_id: Optional[int] = None         # 공용(마스터) 카드 선택 시 (baby_card_id 없음)
     session_length: int = 1                        # 현재 세션에서 선택한 카드 수
     use_gpt: bool = True                            # GPT selector 사용 여부
 
@@ -93,4 +94,17 @@ class ReportRequest(BaseModel):
 
     model_config = {
         "json_schema_extra": {"example": {"baby_id": 3, "period_days": 30}}
+    }
+
+
+# -------------------------------------------------------
+# 관련 단어 (부모 단어추가용 — DB 에 없는 새 단어 생성)
+# -------------------------------------------------------
+class RelatedWordsRequest(BaseModel):
+    text: str
+    count: int = 6
+    exclude: list[str] = []   # 이미 DB 에 있는 단어(중복 제외용)
+
+    model_config = {
+        "json_schema_extra": {"example": {"text": "주먹밥", "count": 6}}
     }

@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 import recommend
+import related
 import grammar
 import image_gen
 import tts
@@ -75,10 +76,24 @@ def get_recommendations(request: schemas.RecommendRequest):
         return recommend.recommend_words(
             baby_id=request.baby_id,
             selected_baby_card_id=request.selected_baby_card_id,
+            selected_card_id=request.selected_card_id,
             top_n=5,
             session_length=request.session_length,
             use_gpt=request.use_gpt,
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------
+# 관련 단어 (부모 단어추가용 — DB 에 없는 새 단어 GPT 생성)
+# -------------------------------------------------------
+@app.post("/related-words")
+def related_words(request: schemas.RelatedWordsRequest):
+    """입력 단어/문장과 관련된, DB 에 없는 새 단어 후보를 제안 (GPT)."""
+    try:
+        items = related.suggest_related(request.text, request.count, request.exclude)
+        return {"text": request.text, "related_words": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
