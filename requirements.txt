@@ -1,5 +1,21 @@
+# --- API 서버 ---
 fastapi
 uvicorn
 pydantic
-psycopg2-binary
 python-dotenv
+
+# --- DB ---
+psycopg2-binary
+
+# --- 회귀 모델 / 데이터 분석 ---
+numpy
+scikit-learn
+pandas
+
+# --- 외부 AI 연동 (GPT / Stable Diffusion / Clova TTS) ---
+openai
+requests
+
+# --- 리포트 시각화 (선택) ---
+plotly
+reportlab

@@ -1,218 +1,132 @@
 # SoriSsack-AI (소리쌕 AI)
 
-AI model training and inference code for the It-is-possible AAC system — personalization, prediction, and language support.
+무발화(minimally verbal) 자폐 아동을 위한 **AI 기반 개인맞춤형 AAC(보완대체의사소통)** 추론 서버.
 
-비언어 자폐 아동을 위한 AAC(보완대체의사소통) 시스템의 AI 추천 서버
-아동의 사용 이력과 개인 특성을 기반으로 다음에 선택할 단어를 예측·추천
+아동의 사용 이력·개인 특성을 기반으로 다음 단어를 예측·추천하고, 선택한 단어를
+**자연스러운 문장 → 이미지 → 음성**의 멀티모달 표현으로 변환하며, 사용 데이터를
+분석해 보호자·교사용 발달 리포트를 생성한다.
 
----
-
-## 프로젝트 구조
-
-```
-sorisak-ai/
-├── main.py            # FastAPI 서버 및 API 엔드포인트
-├── recommend.py       # 핵심 추천 알고리즘
-├── dummy_data.py      # 임시 인메모리 데이터 (DB 연동 전)
-└── test_recommend.py  # 통합 테스트 (5명 아동 시나리오)
-```
+> 2차 보고서 + "AI 1번 기능" 설계 문서를 그대로 코드로 구현한 버전(v2.0).
 
 ---
 
-## 파일별 설명
+## 핵심 아키텍처: 2-레이어 회귀 + GPT 보조
 
-### `main.py` — FastAPI 서버
-
-Spring 백엔드에서 POST 요청을 받아 추천 결과를 반환하는 REST API 서버
-
-**엔드포인트:**
-
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| `GET` | `/` | 헬스 체크 |
-| `POST` | `/recommend` | 단어 추천 (핵심 기능) |
-| `POST` | `/score/update` | 점수 재계산 (추후 구현 예정) |
-
-**요청/응답 형식:**
-
-```json
-// POST /recommend 요청
-{
-  "baby_id": 3,
-  "selected_baby_card_id": 301
-}
-
-// 응답
-{
-  "baby_id": 3,
-  "selected_word": "장난감",
-  "recommended_words": [
-    {
-      "baby_card_id": 302,
-      "card_id": 40,
-      "text": "사주세요",
-      "pos": "verb",
-      "system_score": 1.90
-    },
-    ...
-  ]
-}
 ```
+아동이 카드 선택 ("물")
+        │
+        ▼
+[STEP 1] 태그 의미 필터  (tags.py)
+   ① multi high-tag 교집합   ② 브릿지(범용) 카드 합류   ③ 3개 미만 fallback
+        │
+        ▼
+[STEP 2] 품사 전이        → hard-drop 대신 Layer2 feature(pos_transition_prob)로 soft 반영
+        │
+        ▼
+[STEP 3] Layer 2 맥락 회귀 (layer2.py)  ← Layer 1 점수를 feature 로 입력
+   (선택카드, 후보카드) 쌍의 feature 20개 → 실시간 점수
+        │
+        ▼
+[STEP 4] GPT selector     (gpt_selector.py)
+   상위 후보 중 4~5개 선별·정렬 (새 단어 생성 금지 = 할루시네이션 차단)
+        │
+        ▼
+   추천 단어 4~5개
+```
+
+- **Layer 1 (배치/오프라인, `layer1.py`)** — "이 카드가 이 아동에게 얼마나 중요한가"를
+  feature **15개**로 회귀. 정답 라벨 = 미래 7일 사용량(time-based split). 결과를
+  `baby_card.system_score`에 저장 → Layer 2 입력으로 재사용.
+- **Layer 2 (실시간/온라인, `layer2.py`)** — "방금 선택한 카드 다음에 이 후보가 올 점수"를
+  feature **20개**로 회귀. 저장하지 않고 매 요청 계산.
+- **GPT는 메인이 아니라 보조.** 회귀가 메인, GPT는 결과를 검증·재정렬·보완. 비용/지연 때문에
+  역할을 엄격히 제한(selector·문법보정·리포트 해석).
+
+회귀 가중치는 `train.py`로 학습(scikit-learn `LinearRegression`)해 `models/*.json`에 저장하고,
+없으면 prior + `scoring_config`(아동별 override) 가중치로 **항상 동작**한다.
 
 ---
 
-### `recommend.py` — 추천 알고리즘
+## 파일 구조
 
-추천의 핵심 로직이 담긴 파일. 4단계 필터링 및 점수화 과정을 수행
-
-#### 추천 4단계 흐름
-
-```
-선택한 카드
-    ↓
-[1단계] 태그 기반 의미 필터링
-    ↓
-[2단계] 품사 전이 규칙 필터링
-    ↓
-[3단계] 개인화 점수 계산
-    ↓
-[4단계] 상위 5개 반환
-```
-
-#### 1단계: 태그 기반 의미 필터링 (`filter_by_tag_semantic`)
-
-선택한 단어의 상위 카테고리 태그와 같은 그룹의 단어만 후보로 남기기
-예: "장난감"을 선택하면 "욕구" 카테고리 단어만 추천 (병원 단어는 제외)
-
-#### 2단계: 품사 전이 규칙 (`filter_by_pos_transition`)
-
-문법적으로 자연스러운 단어 순서가 되도록 품사를 기반으로 필터링
-
-```python
-POS_TRANSITION = {
-    "Noun":      ["verb", "adjective"],   # 명사 → 동사/형용사
-    "verb":      ["Noun", "verb"],        # 동사 → 명사/동사
-    "adjective": ["Noun", "verb"],        # 형용사 → 명사/동사
-    None:        ["Noun", "verb", "adjective"],  # 첫 선택 → 전부 허용
-}
-```
-
-#### 3단계: 개인화 점수 계산 (`compute_system_score`)
-
-4가지 특성(feature)을 가중합산하여 점수를 계산
-
-| 특성 | 함수 | 설명 |
-|------|------|------|
-| `usage_count` | `compute_usage_count_feature()` | 사용 빈도 정규화 (0~1) |
-| `recency` | `compute_recency_feature()` | 최근 사용 시간 감쇠 (24시간 반감기) |
-| `time_diversity` | `compute_time_diversity_feature()` | 하루 중 다양한 시간대 사용 여부 |
-| `priority` | `compute_priority_feature()` | 카드 중요도 (1=높음, 3=낮음) |
-
-가중치는 아동별로 개인화 설정 가능합니다 (`SCORING_CONFIG`).
-
-#### 폴백(fallback) 로직
-
-후보가 3개 미만일 경우 순차적으로 조건을 완화
-1. 개인 카드 + 품사 규칙 적용
-2. 개인 카드만 (품사 규칙 제거)
-3. 전체 후보 반환
-
----
-
-### `dummy_data.py` — 임시 데이터 레이어
-
-RDS 연동 전까지 사용하는 인메모리 목 데이터
-함수 시그니처는 그대로 유지하여, 실제 DB 연동 시 내부 구현만 교체하면 됨
-
-**주요 데이터:**
-
-| 데이터 | 설명 | 규모 |
-|--------|------|------|
-| `CARD_MASTER` | 시스템 공통 단어 사전 | 95개 카드 |
-| `TAG_MASTER` | 2계층 의미 카테고리 | 상위 6개 / 하위 17개 |
-| `BABY_CARDS` | 아동별 개인 카드 | 5명 × ~20개 |
-| `BABY_VOCAB_LOGS` | 사용 이력 로그 | ~700건 |
-| `SCORING_CONFIG` | 특성 가중치 (전역 + 아동별 오버라이드) | 11개 설정 |
-
-**태그 계층 구조 (예시):**
-
-```
-욕구 (Desires)
-  ├─ 기본욕구 (배고파, 목마르다...)
-  ├─ 소유욕구 (사주세요, 갖고싶다...)
-  └─ 신체욕구 (아파요, 졸려요...)
-
-감정 (Emotions)
-  ├─ 긍정감정 (좋아, 행복해...)
-  ├─ 부정감정 (싫어, 무서워...)
-  └─ 통증 (머리 아파, 배 아파...)
-```
-
-**테스트용 아동 프로필 (5명):**
-
-| baby_id | 이름 | 나이 | 특징 |
-|---------|------|------|------|
-| 1 | 민준 | 6세 | 음식/요청 중심, 반복 사용 패턴 |
-| 2 | 서아 | 4세 | 감정/놀이/미디어 위주 |
-| 3 | 지호 | 5세 | 장난감/야외활동, "사주세요" 선호 |
-| 4 | 하은 | 7세 | 학교/일상/사람 관련, 시간대 다양 |
-| 5 | 준서 | 3세 | 초기 단계, 기본 단어 반복 |
-
-**주요 함수:**
-
-| 함수 | 설명 |
+| 파일 | 역할 |
 |------|------|
-| `get_baby_cards(baby_id)` | 아동의 활성 카드 목록 반환 |
-| `get_candidate_cards(baby_id)` | 개인 카드 + 미사용 공통 카드 반환 |
-| `get_vocab_logs(baby_id)` | 최근 200건 사용 이력 반환 |
-| `get_scoring_config(baby_id)` | 전역 + 아동별 가중치 병합 반환 |
+| `main.py` | FastAPI 엔드포인트 |
+| `schemas.py` | 요청/응답 Pydantic 스키마 |
+| `config.py` | 환경변수 로딩 + 외부 연동 키 유무 판별 |
+| `repo.py` | **데이터 파사드** — `DATA_SOURCE`로 dummy↔db 전환 |
+| `recommend.py` | 추천 파이프라인 오케스트레이션 |
+| `tags.py` | STEP1 태그 필터(교집합 + 브릿지 + fallback) |
+| `features.py` | Layer1(15) / Layer2(20) feature 추출 |
+| `layer1.py` / `layer2.py` | 카드 중요도 / 맥락 랭킹 회귀 |
+| `linmodel.py` | 선형회귀 컨테이너(JSON 저장/로드) |
+| `train.py` | 오프라인 회귀 학습(sklearn) |
+| `gpt_selector.py` | GPT 단어 selector (새 단어 금지) |
+| `grammar.py` | 문법 보정 → 문장 완성 (GPT) |
+| `image_gen.py` | Stable Diffusion 이미지 생성 |
+| `tts.py` | Naver Clova Voice TTS |
+| `analysis.py` | 5개 발달 지표(pandas + sklearn) |
+| `report.py` | Plotly 그래프 + LLM 자연어 해석 + PDF |
+| `cards.py` | 후보 카드 enrich 유틸 |
+| `dummy_data.py` / `dummy_extra.py` | 인메모리 더미 데이터 |
+| `db.py` | PostgreSQL 데이터 접근(기본 테이블) |
 
 ---
 
-### `test_recommend.py` — 통합 테스트
+## 멀티모달 (말하기 → 표현)
 
-5명 아동의 22개 이상 시나리오를 통해 추천 결과를 검증
+`POST /sentence` 한 번에:
+1. **문법 보정** (`grammar.py`, GPT) — 선택 단어 배열 → 자연스러운 한국어 문장
+2. **이미지** (`image_gen.py`, Stable Diffusion) — Scene Description 추출 → 고정 스타일 프롬프트
+   (pastel, child-friendly, no background/text) → **seed 고정**으로 같은 문장엔 일관된 이미지,
+   `negative_prompt`로 부적합 요소 차단
+3. **음성** (`tts.py`, Clova Voice) — `baby_voice_profile`(speaker/speed/pitch/volume) 반영,
+   청각 민감 아동은 음량 자동 하향
+4. **아바타 감정** + DB 저장(`baby_vocab_log` / `sentence_master` / `sentence_word_map`) → 자기학습 루프
 
-```python
-# 예시: 민준이 "배고파"를 선택한 경우
-recommend_words(baby_id=1, selected_baby_card_id=106)
-# 예상 결과: 밥, 먹다, 주세요 등 식사 관련 단어 추천
-```
+> 외부 키(OpenAI / Stability / Clova)가 없으면 각 단계는 graceful fallback(규칙기반/stub)으로
+> 동작하므로 데모는 키 없이도 돌아간다.
 
 ---
 
-## 실행 방법
+## 발달 리포트 (closed loop)
+
+`POST /report` → 5개 지표를 결정론적으로 계산하고 LLM이 자연어로 해석:
+1. 단어 다양성 변화  2. 평균 문장 길이  3. 카테고리별 사용 비율
+4. 감정 표현 비율  5. 행동 패턴 군집(KMeans)
+
+분석 결과는 다시 `scoring_config` 가중치 조정으로 이어지는 폐쇄 루프 설계.
+
+---
+
+## 실행
 
 ```bash
-# 가상환경 활성화
-source venv/bin/activate
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# (선택) 회귀 모델 학습 — 없으면 prior 가중치로 동작
+python train.py
+
+# 로직만 빠르게 테스트 (서버 불필요)
+python test_recommend.py
 
 # 서버 실행
 uvicorn main:app --reload --port 8000
+# Swagger: http://localhost:8000/docs
 
-# 테스트 실행
-python test_recommend.py
-
-# API 테스트 (curl)
+# API 호출 예시
 curl -X POST http://localhost:8000/recommend \
   -H "Content-Type: application/json" \
   -d '{"baby_id": 3, "selected_baby_card_id": 301}'
 ```
 
----
-
-## 의존성
-
-```
-fastapi
-uvicorn
-pydantic
-```
+`.env`는 `.env.example`를 복사해 작성. 기본 `DATA_SOURCE=dummy`로 DB 없이 동작한다.
 
 ---
 
-## 향후 연동 계획
+## 향후
 
-- `dummy_data.py` 함수들을 SQLAlchemy ORM 쿼리로 교체 (RDS 연동)
-- `/score/update` 엔드포인트 구현
-- Spring 백엔드와 실제 연동 테스트
+- `db.py` 확장(`db_extra.py`)로 PostgreSQL 전체 스키마(온보딩/문장/voice 등) 연동
+- 품사 전이 가중치를 `sentence_word_map` 실측 전이확률로 학습 전환
+- Item2Vec/시퀀셜 모델로 Layer 2 고도화

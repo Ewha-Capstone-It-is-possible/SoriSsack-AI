@@ -1,115 +1,182 @@
 """
 main.py
 --------------
-FastAPI 엔드포인트.
-Spring 서버에서 POST /recommend 호출하면 추천 단어 반환.
+FastAPI 엔드포인트 — Spring 서버(Backend)에서 호출하는 AI 추론 API.
 
-실행 방법:
-    pip install fastapi uvicorn
+실행:
+    pip install -r requirements.txt
     uvicorn main:app --reload --port 8000
 
-Spring 서버 연동:
-    POST http://localhost:8000/recommend
-    Body: {"baby_id": 3, "selected_baby_card_id": 501}
+엔드포인트:
+    GET  /                      헬스 체크
+    POST /recommend            단어 추천 (Layer1+Layer2 회귀 → GPT selector)
+    POST /sentence             '말하기': 문법 보정 → 이미지 → 음성 → 저장 (멀티모달)
+    POST /image                문장 → Stable Diffusion 이미지
+    POST /tts                  문장 → Clova Voice 음성
+    POST /score/update         Layer1 배치 재계산 (system_score 갱신)
+    POST /report               발달 리포트 (5지표 + LLM 해석)
+    GET  /report/{baby_id}/pdf 리포트 PDF 다운로드 정보
 """
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+import os
 
-from recommend import recommend_words
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+
+import config
+import recommend
+import grammar
+import image_gen
+import tts
+import layer1
+import report
+import onboarding
+import repo
+import schemas
 
 app = FastAPI(
     title="소리싹 단어 추천 API",
-    description="무발화 자폐 아동을 위한 AI 기반 개인맞춤형 단어 추천 시스템",
-    version="1.0.0",
+    description="무발화 자폐 아동을 위한 AI 기반 개인맞춤형 의사소통 시스템 "
+                "(2-레이어 회귀 추천 + GPT selector + Stable Diffusion + Clova TTS)",
+    version="2.0.0",
 )
 
+# 생성 미디어(이미지/음성) 정적 서빙: image_gen/tts 가 generated/ 아래에 저장 →
+# /generated/... URL 로 프론트가 직접 로드 (config.public_url 이 절대 URL 생성)
+os.makedirs(config.IMAGE_OUTPUT_DIR, exist_ok=True)
+os.makedirs(config.AUDIO_OUTPUT_DIR, exist_ok=True)
+app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 
-# -------------------------------------------------------
-# Request / Response 스키마
-# -------------------------------------------------------
-
-class RecommendRequest(BaseModel):
-    baby_id: int
-    selected_baby_card_id: Optional[int] = None  # 첫 선택이면 None
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "baby_id": 3,
-                "selected_baby_card_id": 501  # "물" 카드 선택
-            }
-        }
-
-
-class RecommendedWord(BaseModel):
-    baby_card_id: Optional[int]   # None이면 아직 baby_card에 없는 card_master 기본 카드
-    card_id: Optional[int]        # card_master의 card_id. None이면 부모가 추가한 커스텀 카드
-    text: str
-    pos: Optional[str]
-    system_score: float
-
-
-class RecommendResponse(BaseModel):
-    baby_id: int
-    selected_word: Optional[str]
-    recommended_words: list[RecommendedWord]
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "baby_id": 3,
-                "selected_word": "장난감",
-                "recommended_words": [
-                    {"baby_card_id": 302, "card_id": 40,   "text": "사주세요",   "pos": "verb",      "system_score": 1.63},
-                    {"baby_card_id": 303, "card_id": 41,   "text": "갖고싶어요", "pos": "adjective", "system_score": 1.57},
-                    {"baby_card_id": 304, "card_id": 42,   "text": "놀고싶어요", "pos": "verb",      "system_score": 1.52},
-                    {"baby_card_id": None, "card_id": 36,  "text": "블록",       "pos": "Noun",      "system_score": 0.50},
-                    {"baby_card_id": None, "card_id": 38,  "text": "공",         "pos": "Noun",      "system_score": 0.50},
-                ]
-            }
-        }
-
-
-# -------------------------------------------------------
-# 엔드포인트
-# -------------------------------------------------------
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "소리싹 단어 추천 API"}
+    return {
+        "status": "ok",
+        "service": "소리싹 단어 추천 API",
+        "data_source": config.DATA_SOURCE,
+        "integrations": {
+            "openai": config.has_openai(),
+            "stable_diffusion": config.has_stability(),
+            "clova_tts": config.has_clova(),
+        },
+    }
 
 
-@app.post("/recommend", response_model=RecommendResponse)
-def get_recommendations(request: RecommendRequest):
+# -------------------------------------------------------
+# 단어 추천
+# -------------------------------------------------------
+@app.post("/recommend", response_model=schemas.RecommendResponse)
+def get_recommendations(request: schemas.RecommendRequest):
     """
-    단어 추천 API.
-
-    - **baby_id**: 아동 ID
-    - **selected_baby_card_id**: 방금 선택한 카드 ID (첫 선택이면 생략)
-
-    Returns: 추천 단어 4~5개 (system_score 내림차순)
+    선택 카드 기반 다음 단어 추천 (system_score 내림차순, 최대 5개).
+    파이프라인: 태그필터(+브릿지) → Layer2 맥락회귀 → GPT selector.
     """
     try:
-        result = recommend_words(
+        return recommend.recommend_words(
             baby_id=request.baby_id,
             selected_baby_card_id=request.selected_baby_card_id,
             top_n=5,
+            session_length=request.session_length,
+            use_gpt=request.use_gpt,
         )
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# -------------------------------------------------------
+# 문장 완성 + 멀티모달 ('말하기')
+# -------------------------------------------------------
+@app.post("/sentence", response_model=schemas.SentenceResponse)
+def speak_sentence(request: schemas.SentenceRequest):
+    """
+    선택 단어 배열 → 자연스러운 문장 → 이미지·음성 동시 생성 → DB 저장.
+    """
+    try:
+        words = [w.model_dump() for w in request.words]
+        texts = [w["text"] for w in words]
+        level = repo.get_level_info(request.baby_id)
+
+        sentence = grammar.complete_sentence(texts, level)
+        image = image_gen.generate_image(sentence, words, request.baby_id)
+        audio = tts.synthesize(sentence, request.baby_id)
+        avatar = repo.get_avatar_profile(request.baby_id, request.emotion)
+
+        # 자기학습 루프: 로그 + 문장 저장
+        for w in words:
+            repo.append_vocab_log(request.baby_id, w.get("baby_card_id"),
+                                  w.get("card_id"), w.get("text"))
+        repo.save_sentence(request.baby_id, words, sentence,
+                           image.get("image_url"), audio.get("audio_url"))
+
+        return {
+            "baby_id": request.baby_id, "sentence": sentence,
+            "image": image, "audio": audio, "avatar": avatar, "saved": True,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/image")
+def generate_image(request: schemas.ImageRequest):
+    try:
+        words = [w.model_dump() for w in request.words] if request.words else None
+        return image_gen.generate_image(request.sentence, words, request.baby_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tts")
+def generate_tts(request: schemas.TTSRequest):
+    try:
+        return tts.synthesize(request.text, request.baby_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------
+# Layer1 배치 재계산
+# -------------------------------------------------------
 @app.post("/score/update")
 def update_scores(baby_id: int):
-    """
-    (예정) 아동의 모든 카드 system_score를 재계산하여 baby_card 테이블에 반영.
-    현재는 stub - DB 연결 후 구현 예정.
-    """
-    # TODO: DB 연결 후
-    # 1. get_vocab_logs(baby_id) 로 로그 가져오기
-    # 2. 각 baby_card에 대해 compute_system_score() 실행
-    # 3. baby_card.system_score UPDATE 쿼리 실행
-    return {"message": f"baby_id={baby_id} score update 예정 (DB 연결 후 구현)"}
+    """아동의 모든 카드 system_score(Layer1 중요도)를 재계산·저장."""
+    try:
+        n = layer1.update_scores(baby_id)
+        return {"baby_id": baby_id, "updated_cards": n, "status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------------------------------
+# 발달 리포트
+# -------------------------------------------------------
+@app.post("/report")
+def get_report(request: schemas.ReportRequest):
+    """발달 리포트: 기간 대비 5지표 변화 + LLM 자연어 해석 + Plotly 차트."""
+    try:
+        return report.generate_report(request.baby_id, request.period_days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/onboarding/{baby_id}/assessment")
+def get_cognitive_assessment(baby_id: int):
+    """온보딩 인지 테스트 영역별 채점 프로파일 + GPT 자연어 평가."""
+    try:
+        return onboarding.assess_cognition(baby_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/report/{baby_id}/pdf")
+def get_report_pdf(baby_id: int, period_days: int = None):
+    """리포트 PDF 생성. reportlab 설치 시 파일 다운로드, 미설치 시 JSON 리포트 반환."""
+    try:
+        result = report.export_pdf(
+            baby_id, f"generated/reports/report_{baby_id}.pdf", period_days)
+        if result.get("path"):
+            from fastapi.responses import FileResponse
+            return FileResponse(result["path"], media_type="application/pdf",
+                                filename=f"report_{baby_id}.pdf")
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

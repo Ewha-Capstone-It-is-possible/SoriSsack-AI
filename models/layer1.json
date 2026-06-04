@@ -1,0 +1,38 @@
+{
+  "feature_order": [
+    "usage_count_7d",
+    "usage_count_30d",
+    "usage_trend",
+    "recency",
+    "time_diversity_entropy",
+    "sentence_completion_rate",
+    "avg_sentence_position",
+    "is_favorite",
+    "source_weight",
+    "priority",
+    "tag_confidence_avg",
+    "tag_coverage",
+    "co_occurrence_centrality",
+    "onboarding_match_score",
+    "cognitive_difficulty_gap"
+  ],
+  "coef": {
+    "usage_count_7d": 0.05458395974471733,
+    "usage_count_30d": 0.05458395974471499,
+    "usage_trend": 0.09995217137639835,
+    "recency": 0.030449070346827343,
+    "time_diversity_entropy": 0.3062096422224919,
+    "sentence_completion_rate": 0.02099950740008553,
+    "avg_sentence_position": -0.1487669384303711,
+    "is_favorite": 0.28134580597943304,
+    "source_weight": -0.5484420844205627,
+    "priority": 0.04053137570410862,
+    "tag_confidence_avg": 0.329065250652338,
+    "tag_coverage": 0.10309985436804797,
+    "co_occurrence_centrality": 0.2212026241899389,
+    "onboarding_match_score": -0.008400341340558162,
+    "cognitive_difficulty_gap": -0.005711461781609006
+  },
+  "intercept": -0.01849509856875356,
+  "source": "trained"
+}

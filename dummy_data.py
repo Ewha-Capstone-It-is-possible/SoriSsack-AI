@@ -161,6 +161,7 @@ TAG_MASTER = [
     {"tag_id": 4,  "name": "요청",     "normalized_name": "요청",     "tag_level": "high", "parent_tag_id": None},
     {"tag_id": 5,  "name": "사람",     "normalized_name": "사람",     "tag_level": "high", "parent_tag_id": None},
     {"tag_id": 6,  "name": "장소",     "normalized_name": "장소",     "tag_level": "high", "parent_tag_id": None},
+    {"tag_id": 7,  "name": "범용",     "normalized_name": "범용",     "tag_level": "high", "parent_tag_id": None},  # 브릿지 카드: 주제 무관 항상 후보
 
     {"tag_id": 10, "name": "기본욕구", "normalized_name": "기본욕구", "tag_level": "low",  "parent_tag_id": 1},
     {"tag_id": 11, "name": "소유욕구", "normalized_name": "소유욕구", "tag_level": "low",  "parent_tag_id": 1},
@@ -196,11 +197,11 @@ CARD_MASTER_TAGS = {
     15: [2, 22], 16: [1, 12], 17: [1, 13],                  # 아파, 피곤해, 졸려
     18: [1, 12], 19: [1, 12], 20: [2, 22],                  # 더워, 추워, 가려워
     # 감정
-    21: [2, 20], 22: [2, 21], 23: [2, 21],                  # 좋아, 싫어, 슬퍼
+    21: [2, 20, 7], 22: [2, 21, 7], 23: [2, 21],            # 좋아(범용), 싫어(범용), 슬퍼
     24: [2, 21], 25: [2, 20], 26: [2, 21], 27: [2, 20],     # 무서워, 행복해, 화나, 신나
     # 요청·의사표현
-    28: [4, 10], 29: [4, 41], 30: [4, 42],                  # 주세요, 도와줘, 그만
-    31: [4, 10], 32: [4, 32], 33: [4, 42], 34: [4, 34],     # 더, 같이, 안해, 틀어줘
+    28: [4, 10, 7], 29: [4, 41, 7], 30: [4, 42, 7],         # 주세요·도와줘·그만 (모두 범용 브릿지)
+    31: [4, 10, 7], 32: [4, 32], 33: [4, 42], 34: [4, 34],  # 더(범용), 같이, 안해, 틀어줘
     # 장난감·놀이
     35: [1, 11], 36: [1, 11], 37: [1, 11], 38: [1, 11], 39: [1, 11],
     40: [4, 40, 1], 41: [1, 11], 42: [1, 3, 32], 43: [3, 32],
@@ -245,11 +246,15 @@ CARD_MASTER_TAGS = {
 def _bc(baby_card_id, baby_id, card_id,
         usage_count, hours_ago,
         text=None, pos=None,
-        status="default", is_favorite=False, priority=None):
+        status="default", is_favorite=False, priority=None,
+        source=None):
     cm_priority = priority
     if cm_priority is None and card_id is not None:
         cm_priority = next(
             (c["priority"] for c in CARD_MASTER if c["card_id"] == card_id), 2)
+    # source 추론: 부모 커스텀(card_id 없음/status=add) → parent_manual, 그 외 system_default
+    if source is None:
+        source = "parent_manual" if (card_id is None or status == "add") else "system_default"
     return {
         "baby_card_id": baby_card_id,
         "baby_id":      baby_id,
@@ -257,6 +262,7 @@ def _bc(baby_card_id, baby_id, card_id,
         "text":         text,       # None → card_master.base_text 사용
         "type":         pos,        # None → card_master.part_of_speech 사용
         "status":       status,
+        "source":       source,     # parent_manual | onboarding | ai_recommend_selected | system_default
         "is_active":    True,
         "is_favorite":  is_favorite,
         "usage_count":  usage_count,
@@ -624,6 +630,7 @@ def get_candidate_cards(baby_id: int) -> list[dict]:
                 "text":         None,
                 "type":         None,
                 "status":       "default",
+                "source":       "system_default",
                 "is_active":    True,
                 "is_favorite":  False,
                 "usage_count":  0,

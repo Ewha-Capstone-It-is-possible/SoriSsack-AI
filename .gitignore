@@ -4,13 +4,17 @@ __pycache__/
 
 # venv
 venv/
+.venv/
 
-# data 
+# data
 *.h5
 *.npy
 *.pt
 *.pth
 data/
+
+# 생성물 (이미지/음성/PDF 리포트)
+generated/
 
 # config
 .env
