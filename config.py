@@ -76,6 +76,19 @@ def public_url(path: str) -> str:
     return f"{PUBLIC_BASE_URL}/{rel}"
 
 
+# -------------------------------------------------------
+# S3 (생성 이미지/음성 저장) — 있으면 로컬 대신 S3 업로드
+# -------------------------------------------------------
+S3_BUCKET = _get("S3_BUCKET")
+S3_REGION = _get("S3_REGION", "ap-southeast-2")
+S3_ACCESS_KEY = _get("AWS_ACCESS_KEY_ID")
+S3_SECRET_KEY = _get("AWS_SECRET_ACCESS_KEY")
+
+
+def has_s3() -> bool:
+    return bool(S3_BUCKET and S3_ACCESS_KEY and S3_SECRET_KEY)
+
+
 def has_openai() -> bool:
     return bool(OPENAI_API_KEY)
 

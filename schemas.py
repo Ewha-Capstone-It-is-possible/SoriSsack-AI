@@ -53,6 +53,7 @@ class SentenceRequest(BaseModel):
     baby_id: int
     words: list[WordItem]
     emotion: Optional[str] = "neutral"      # 아바타 감정 (happy/sad/angry/neutral/surprised)
+    favorite_color: Optional[str] = None    # 아이가 좋아하는 색 → 캐릭터 셔츠 (pink/blue/green...)
 
     model_config = {
         "json_schema_extra": {
@@ -134,6 +135,8 @@ class ImageRequest(BaseModel):
     sentence: str
     words: Optional[list[WordItem]] = None
     baby_id: Optional[int] = None
+    favorite_color: Optional[str] = None    # 아이가 좋아하는 색 → 캐릭터 셔츠
+    kind: Optional[str] = "sentence"        # "sentence"(말하기 동작) | "word"(단어카드, 물체 강조)
 
     model_config = {
         "json_schema_extra": {
@@ -259,3 +262,70 @@ class OnboardingResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# -------------------------------------------------------
+# 인사이트 (리포트 GPT 해석 / 감정일기)
+# -------------------------------------------------------
+class ReportInsightRequest(BaseModel):
+    """백엔드가 계산한 통계 → GPT 자연어 해석."""
+    stats: dict
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"stats": {
+                "period_days": 7, "total_selections": 24, "unique_words": 11,
+                "total_sentences": 6, "average_sentence_length": 2.3,
+                "top_words": [{"text": "엄마", "count": 5}, {"text": "물", "count": 3}],
+                "emotion_counts": {"happy": 4, "neutral": 2},
+                "recent_sentences": ["물 마시고 싶어요", "엄마 안아줘"],
+            }}
+        }
+    }
+
+
+class ReportInsightResponse(BaseModel):
+    insight: str
+
+
+class EmotionDiaryRequest(BaseModel):
+    """그날 사용 기록 → 감정일기."""
+    date: Optional[str] = None
+    sentences: list[str] = []
+    top_words: list[str] = []
+    emotions: Optional[dict] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"date": "2026-06-18",
+                        "sentences": ["엄마 안아줘", "놀자", "물 마시고 싶어요"],
+                        "top_words": ["엄마", "놀자", "물"], "emotions": {"happy": 2}}
+        }
+    }
+
+
+class EmotionDiaryResponse(BaseModel):
+    mood: str
+    diary: str
+
+
+class ReportChartsRequest(BaseModel):
+    """리포트 통계 → 그래프 PNG 이미지 생성."""
+    baby_id: int
+    stats: dict
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"baby_id": 3, "stats": {
+                "top_words": [{"text": "엄마", "count": 22}, {"text": "안아줘", "count": 12}],
+                "emotion_counts": {"happy": 4, "neutral": 2},
+                "category_usage": {"욕구": 60, "감정": 40},
+            }}
+        }
+    }
+
+
+class ReportChartsResponse(BaseModel):
+    words_chart_url: Optional[str] = None
+    emotion_chart_url: Optional[str] = None
+    category_chart_url: Optional[str] = None

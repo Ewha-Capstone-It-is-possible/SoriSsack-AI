@@ -16,6 +16,10 @@ pandas
 openai
 requests
 
+# --- S3 (생성 미디어 저장) ---
+boto3
+
 # --- 리포트 시각화 (선택) ---
 plotly
 reportlab
+matplotlib

@@ -52,6 +52,13 @@ get_tag             = _b("get_tag")
 # db.py 에는 get_all_card_masters 가 없을 수 있음 → candidate 기반 대체
 get_all_card_masters = getattr(_base, "get_all_card_masters", None)
 
+# 아동 기본정보(성별) — 이미지 캐릭터 개인화용 (dummy 면 빈 dict → 중립 캐릭터)
+get_baby_basic = getattr(_base, "get_baby_basic", lambda baby_id: {})
+
+# 아바타 외모 설정 영속화(이미지 일관성/색 기억). dummy 면 no-op.
+get_avatar_config    = getattr(_base, "get_avatar_config", lambda baby_id: {})
+upsert_avatar_config = getattr(_base, "upsert_avatar_config", lambda baby_id, cfg: None)
+
 
 # -------------------------------------------------------
 # 확장 테이블 (dummy_extra ↔ db_extra)

@@ -141,6 +141,81 @@ def get_candidate_cards(baby_id: int) -> list[dict]:
 
 
 # -------------------------------------------------------
+# get_baby_basic — 아동 기본정보(성별) : 이미지 개인화용
+# -------------------------------------------------------
+
+def get_baby_basic(baby_id: int) -> dict:
+    """아동 기본 정보(성별 등). 이미지 캐릭터 개인화(성별·고정 시드)에 사용."""
+    conn = _conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT baby_id, baby_name, sex, birth "
+                "FROM baby_basic_information WHERE baby_id = %s",
+                (baby_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else {}
+    finally:
+        _release(conn)
+
+
+# -------------------------------------------------------
+# 아바타 외모 설정 (baby_avatar_profile.config_json) — 이미지 개인화 영속화
+# -------------------------------------------------------
+
+def get_avatar_config(baby_id: int) -> dict:
+    """저장된 외모 설정(config_json). 없으면 {}."""
+    conn = _conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT config_json FROM baby_avatar_profile "
+                "WHERE baby_id = %s AND is_active = TRUE ORDER BY avatar_id DESC LIMIT 1",
+                (baby_id,),
+            )
+            row = cur.fetchone()
+            cfg = row["config_json"] if row else None
+            return cfg if isinstance(cfg, dict) else {}
+    finally:
+        _release(conn)
+
+
+def upsert_avatar_config(baby_id: int, config_json: dict) -> None:
+    """외모 설정 저장(없으면 생성). base_avatar_image_url 은 NOT NULL → 빈값."""
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT avatar_id FROM baby_avatar_profile "
+                "WHERE baby_id = %s AND is_active = TRUE ORDER BY avatar_id DESC LIMIT 1",
+                (baby_id,),
+            )
+            row = cur.fetchone()
+            payload = psycopg2.extras.Json(config_json)
+            # avatar_type 은 CHECK 제약: default_male | default_female | custom_photo
+            sex = str(config_json.get("sex") or "").upper()
+            avatar_type = "default_female" if sex.startswith("F") else "default_male"
+            if row:
+                cur.execute(
+                    "UPDATE baby_avatar_profile "
+                    "SET config_json = %s, avatar_type = %s, updated_at = now() "
+                    "WHERE avatar_id = %s",
+                    (payload, avatar_type, row[0]),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO baby_avatar_profile "
+                    "(baby_id, avatar_type, base_avatar_image_url, config_json, is_active) "
+                    "VALUES (%s, %s, %s, %s, TRUE)",
+                    (baby_id, avatar_type, "", payload),
+                )
+            conn.commit()
+    finally:
+        _release(conn)
+
+
+# -------------------------------------------------------
 # get_card_master
 # -------------------------------------------------------
 

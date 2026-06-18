@@ -27,7 +27,9 @@ import config
 import recommend
 import related
 import grammar
+import charts
 import image_gen
+import insights
 import tts
 import layer1
 import report
@@ -153,7 +155,7 @@ def speak_sentence(request: schemas.SentenceRequest):
         level = repo.get_level_info(request.baby_id)
 
         sentence = grammar.complete_sentence(texts, level)
-        image = image_gen.generate_image(sentence, words, request.baby_id)
+        image = image_gen.generate_image(sentence, words, request.baby_id, request.favorite_color)
         audio = tts.synthesize(sentence, request.baby_id)
         avatar = repo.get_avatar_profile(request.baby_id, request.emotion)
 
@@ -182,7 +184,8 @@ def speak_sentence(request: schemas.SentenceRequest):
 def generate_image(request: schemas.ImageRequest):
     try:
         words = [w.model_dump() for w in request.words] if request.words else None
-        return image_gen.generate_image(request.sentence, words, request.baby_id)
+        return image_gen.generate_image(request.sentence, words, request.baby_id,
+                                        request.favorite_color, request.kind or "sentence")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -234,6 +237,51 @@ def get_report(request: schemas.ReportRequest):
     """발달 리포트: 기간 대비 5지표 변화 + LLM 자연어 해석 + Plotly 차트."""
     try:
         return report.generate_report(request.baby_id, request.period_days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(
+    "/report/insight",
+    response_model=schemas.ReportInsightResponse,
+    tags=["report"],
+    summary="리포트 GPT 해석 (통계 → 따뜻한 한국어)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
+def report_insight(request: schemas.ReportInsightRequest):
+    """백엔드가 계산한 리포트 통계를 받아 보호자용 자연어 해석을 생성."""
+    try:
+        return {"insight": insights.report_insight(request.stats)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(
+    "/report/charts",
+    response_model=schemas.ReportChartsResponse,
+    tags=["report"],
+    summary="리포트 그래프 이미지 생성 (PNG → S3 URL)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
+def report_charts(request: schemas.ReportChartsRequest):
+    """리포트 통계를 받아 막대/도넛 그래프를 PNG로 렌더하고 S3 URL 반환."""
+    try:
+        return charts.build_report_charts(request.baby_id, request.stats)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post(
+    "/emotion-diary",
+    response_model=schemas.EmotionDiaryResponse,
+    tags=["report"],
+    summary="감정일기 생성 (그날 문장/단어 → 하루·감정)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
+def emotion_diary(request: schemas.EmotionDiaryRequest):
+    """그날 사용한 문장/단어를 보고 아이의 하루·감정을 일기로 생성."""
+    try:
+        return insights.emotion_diary(request.model_dump())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -54,7 +54,16 @@ def synthesize(text: str, baby_id: int) -> dict:
             timeout=30,
         )
         resp.raise_for_status()
-        path = os.path.join(config.AUDIO_OUTPUT_DIR, _fname(text, baby_id))
+        fname = _fname(text, baby_id)
+
+        # S3 설정이 있으면 S3 업로드(영구), 없으면 로컬 디스크 저장
+        if config.has_s3():
+            import s3
+            audio_url = s3.upload_bytes(resp.content, f"audio/{fname}", "audio/mpeg")
+            return {"audio_url": audio_url, "audio_path": f"s3://audio/{fname}",
+                    "params": params, "status": "generated"}
+
+        path = os.path.join(config.AUDIO_OUTPUT_DIR, fname)
         with open(path, "wb") as f:
             f.write(resp.content)
         return {"audio_url": config.public_url(path), "audio_path": path,
