@@ -35,11 +35,27 @@ import onboarding
 import repo
 import schemas
 
+TAGS_METADATA = [
+    {"name": "health", "description": "서버 상태 + 외부 연동(OpenAI/Stable Diffusion/Clova) 활성화 여부"},
+    {"name": "recommend", "description": "2-레이어 회귀 + GPT selector 기반 다음 단어 추천"},
+    {"name": "multimodal", "description": "‘말하기’ — 선택 단어 → 문장 → 이미지(Stable Diffusion) → 음성(Clova)"},
+    {"name": "score", "description": "Layer1 배치 점수(system_score) 재계산"},
+    {"name": "report", "description": "발달 리포트(5지표) + 온보딩 인지 평가"},
+]
+
 app = FastAPI(
-    title="소리싹 단어 추천 API",
-    description="무발화 자폐 아동을 위한 AI 기반 개인맞춤형 의사소통 시스템 "
-                "(2-레이어 회귀 추천 + GPT selector + Stable Diffusion + Clova TTS)",
+    title="소리싹 AI 추론 API",
+    description=(
+        "무발화 자폐 아동을 위한 AI 기반 개인맞춤형 의사소통 추론 서버.\n\n"
+        "백엔드(SoriSsack-Back, FastAPI :8000)가 `httpx` 로 호출하는 내부 AI 서버다. "
+        "프론트(React Native)는 이 서버를 직접 호출하지 않고, 응답에 담긴 "
+        "`image_url`/`audio_url`(정적 미디어)만 `/generated/...` 에서 직접 로드한다.\n\n"
+        "구성: 2-레이어 회귀 추천 + GPT selector + Stable Diffusion + Clova TTS + 발달 리포트.\n"
+        "외부 키가 없으면 각 단계는 graceful fallback(규칙기반/stub)으로 동작한다."
+    ),
     version="2.0.0",
+    openapi_tags=TAGS_METADATA,
+    contact={"name": "SoriSsack (이화여대 캡스톤)", "url": "http://localhost:8001/docs"},
 )
 
 # 생성 미디어(이미지/음성) 정적 서빙: image_gen/tts 가 generated/ 아래에 저장 →
@@ -49,7 +65,13 @@ os.makedirs(config.AUDIO_OUTPUT_DIR, exist_ok=True)
 app.mount("/generated", StaticFiles(directory="generated"), name="generated")
 
 
-@app.get("/")
+@app.get(
+    "/",
+    response_model=schemas.HealthResponse,
+    tags=["health"],
+    summary="헬스 체크 + 연동 상태",
+    description="서버 상태와 외부 연동 활성화 여부를 반환. 모두 true 여야 실제 GPT/이미지/음성이 동작한다(아니면 stub).",
+)
 def health_check():
     return {
         "status": "ok",
@@ -66,7 +88,13 @@ def health_check():
 # -------------------------------------------------------
 # 단어 추천
 # -------------------------------------------------------
-@app.post("/recommend", response_model=schemas.RecommendResponse)
+@app.post(
+    "/recommend",
+    response_model=schemas.RecommendResponse,
+    tags=["recommend"],
+    summary="다음 단어 추천",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def get_recommendations(request: schemas.RecommendRequest):
     """
     선택 카드 기반 다음 단어 추천 (system_score 내림차순, 최대 5개).
@@ -88,7 +116,13 @@ def get_recommendations(request: schemas.RecommendRequest):
 # -------------------------------------------------------
 # 관련 단어 (부모 단어추가용 — DB 에 없는 새 단어 GPT 생성)
 # -------------------------------------------------------
-@app.post("/related-words")
+@app.post(
+    "/related-words",
+    response_model=schemas.RelatedWordsResponse,
+    tags=["recommend"],
+    summary="관련 단어 생성 (부모 단어추가용)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def related_words(request: schemas.RelatedWordsRequest):
     """입력 단어/문장과 관련된, DB 에 없는 새 단어 후보를 제안 (GPT)."""
     try:
@@ -101,7 +135,14 @@ def related_words(request: schemas.RelatedWordsRequest):
 # -------------------------------------------------------
 # 문장 완성 + 멀티모달 ('말하기')
 # -------------------------------------------------------
-@app.post("/sentence", response_model=schemas.SentenceResponse)
+@app.post(
+    "/sentence",
+    response_model=schemas.SentenceResponse,
+    tags=["multimodal"],
+    summary="말하기: 문장 + 이미지 + 음성",
+    description="선택 단어 배열 → 자연스러운 문장 → Stable Diffusion 이미지 + Clova 음성 동시 생성 → DB 저장.",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def speak_sentence(request: schemas.SentenceRequest):
     """
     선택 단어 배열 → 자연스러운 문장 → 이미지·음성 동시 생성 → DB 저장.
@@ -131,7 +172,13 @@ def speak_sentence(request: schemas.SentenceRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/image")
+@app.post(
+    "/image",
+    response_model=schemas.ImageResult,
+    tags=["multimodal"],
+    summary="이미지만 생성 (Stable Diffusion)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def generate_image(request: schemas.ImageRequest):
     try:
         words = [w.model_dump() for w in request.words] if request.words else None
@@ -140,7 +187,13 @@ def generate_image(request: schemas.ImageRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/tts")
+@app.post(
+    "/tts",
+    response_model=schemas.AudioResult,
+    tags=["multimodal"],
+    summary="음성만 생성 (Clova Voice)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def generate_tts(request: schemas.TTSRequest):
     try:
         return tts.synthesize(request.text, request.baby_id)
@@ -151,9 +204,15 @@ def generate_tts(request: schemas.TTSRequest):
 # -------------------------------------------------------
 # Layer1 배치 재계산
 # -------------------------------------------------------
-@app.post("/score/update")
+@app.post(
+    "/score/update",
+    response_model=schemas.ScoreUpdateResponse,
+    tags=["score"],
+    summary="Layer1 배치 점수 재계산",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def update_scores(baby_id: int):
-    """아동의 모든 카드 system_score(Layer1 중요도)를 재계산·저장."""
+    """아동의 모든 카드 system_score(Layer1 중요도)를 재계산·저장 (baby_id 는 쿼리 파라미터)."""
     try:
         n = layer1.update_scores(baby_id)
         return {"baby_id": baby_id, "updated_cards": n, "status": "ok"}
@@ -164,7 +223,13 @@ def update_scores(baby_id: int):
 # -------------------------------------------------------
 # 발달 리포트
 # -------------------------------------------------------
-@app.post("/report")
+@app.post(
+    "/report",
+    response_model=schemas.ReportResponse,
+    tags=["report"],
+    summary="발달 리포트 (5지표 + LLM 해석)",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def get_report(request: schemas.ReportRequest):
     """발달 리포트: 기간 대비 5지표 변화 + LLM 자연어 해석 + Plotly 차트."""
     try:
@@ -173,7 +238,13 @@ def get_report(request: schemas.ReportRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/onboarding/{baby_id}/assessment")
+@app.get(
+    "/onboarding/{baby_id}/assessment",
+    response_model=schemas.OnboardingResponse,
+    tags=["report"],
+    summary="온보딩 인지 평가",
+    responses={500: {"model": schemas.ErrorResponse}},
+)
 def get_cognitive_assessment(baby_id: int):
     """온보딩 인지 테스트 영역별 채점 프로파일 + GPT 자연어 평가."""
     try:
@@ -182,7 +253,16 @@ def get_cognitive_assessment(baby_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/report/{baby_id}/pdf")
+@app.get(
+    "/report/{baby_id}/pdf",
+    tags=["report"],
+    summary="리포트 PDF 다운로드",
+    description="reportlab 설치 시 application/pdf 파일 다운로드, 미설치 시 JSON 리포트 반환.",
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "PDF 파일 또는 JSON 리포트"},
+        500: {"model": schemas.ErrorResponse},
+    },
+)
 def get_report_pdf(baby_id: int, period_days: int = None):
     """리포트 PDF 생성. reportlab 설치 시 파일 다운로드, 미설치 시 JSON 리포트 반환."""
     try:
