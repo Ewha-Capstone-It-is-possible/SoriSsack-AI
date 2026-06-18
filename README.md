@@ -153,11 +153,22 @@ curl -X POST http://localhost:8001/sentence \
 
 ## 6. Database / 사용 데이터
 
-- **PostgreSQL** (`DATA_SOURCE=db`) — 운영 시 사용. 접속 정보는 `.env`(DB_HOST/PORT/NAME/USER/PASSWORD).
+### 실제 운영 DB (배포 환경)
+
+- **AWS RDS PostgreSQL** (`DATA_SOURCE=db`) — 배포(EC2) 환경에서 **백엔드 서버와 동일한 RDS 인스턴스를 공유**한다.
+  추천·리포트가 실제 아동 데이터(카드·로그·태그·스코어링)를 기준으로 동작한다.
+  접속 정보는 `.env`(DB_HOST/PORT/NAME/USER/PASSWORD)로 주입하며, 보안상 저장소에는 포함하지 않는다.
   주요 테이블: `baby_basic_information`, `baby_card`, `card_master`, `baby_vocab_log`,
   `sentence_master`, `scoring_config`, `tag_master`, `baby_avatar_profile` 등.
-- 데모/개발 시에는 위 샘플 데이터(`DATA_SOURCE=dummy`)로 DB 없이 동작한다.
-- 생성 미디어(이미지·음성)는 `S3_BUCKET` 설정 시 **AWS S3**에 저장(공개 읽기), 미설정 시 로컬 `generated/`에 저장.
+
+### 재현/채점용 기본 모드 (DB 없이 동작)
+
+- `DATA_SOURCE=dummy`(기본값) — 인메모리 샘플 데이터(`dummy_data.py`, `dummy_extra.py`)로
+  **DB 서버 없이 clone 후 바로 실행·재현**할 수 있다. (RDS 비밀번호는 공개 저장소에 올릴 수 없으므로 제공)
+
+> 즉 **운영은 백엔드와 공유하는 RDS(PostgreSQL), 재현은 인메모리 더미 데이터**로 동작한다.
+
+- 생성 미디어(이미지·음성·그래프)는 `S3_BUCKET` 설정 시 **AWS S3**에 저장(공개 읽기), 미설정 시 로컬 `generated/`에 저장한다.
 
 ---
 
