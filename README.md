@@ -1,4 +1,4 @@
-# SoriSsack-AI (소리쌕 AI 추론 서버)
+# SoriSsack-AI (소리싹 AI 추론 서버)
 
 무발화(minimally verbal) 자폐 아동을 위한 **AI 기반 개인맞춤형 AAC(보완대체의사소통)** 추론 서버.
 
